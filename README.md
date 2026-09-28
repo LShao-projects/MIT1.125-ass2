@@ -9,62 +9,46 @@ recommendations based on reading history, interests, and discovery.
 
 ## Setup and run
 
-Requirements: Bash 3.2+, Gum, jq, Python 3, and curl. Codex CLI is needed only
-for AI recommendations. On macOS with Homebrew:
+On macOS with Homebrew:
 
-```bash
-brew install gum jq python
-# If Codex CLI is not already installed:
-brew install --cask codex
-codex login
-```
+1. Install the dependencies:
 
-Choose **Sign in with ChatGPT**. This project uses your included Codex allowance;
-it does not set up API billing. It refuses API-key login and requests ChatGPT
-access explicitly. Your account needs Codex access, internet connectivity, and
-remaining usage allowance. The CLI's configured model is retained. Install a
-recent CLI supporting `exec --ephemeral --output-schema --output-last-message`.
-See [Codex CLI](https://learn.chatgpt.com/docs/codex/cli) and
-[authentication](https://learn.chatgpt.com/docs/auth).
+   ```bash
+   brew install gum jq python
+   brew install --cask codex
+   ```
 
-On Linux, install Gum from its [official instructions](https://github.com/charmbracelet/gum#installation),
-plus Bash, jq, Python 3, curl, and Codex CLI using your distribution's supported
-installation methods.
+2. Log in to Codex and choose **Sign in with ChatGPT**:
 
-From this directory:
+   ```bash
+   codex login
+   ```
 
-```bash
-bash app.sh
-# Separate temporary fantasy library; discarded when you exit:
-bash app.sh --demo
-```
+3. From the project directory, start the application:
 
-Use arrow keys and Enter to select, Esc to go back, and Quit to exit. The default
-library includes sample records. Demo mode uses a separate temporary library;
-its AI recommendations are live and consume Codex allowance.
+   ```bash
+   bash app.sh
+   ```
 
-The menu supports browsing, adding, searching, updating status/rating, and
-getting recommendations. Adding a book offers metadata lookup or manual entry.
-Review the details before saving. Search matches title, author, and genre.
-Statuses are `want-to-read`, `reading`, and `finished`; ratings are optional 1–5.
-For a recommendation, choose a book, select **Review and save**, edit or confirm
-its details, and confirm the save. Open Library lookup is available in **Add Book**.
+Use the arrow keys to navigate, Enter to select, Esc to go back, and Quit to exit.
+For a temporary sample library, run `bash app.sh --demo`.
 
 ## Architecture
 
-The application is organized into small Bash scripts with separate responsibilities.
-`app.sh` starts the Gum interface in `ui/`, where users choose actions and view
-results. `ui/library_screen.sh` also collects book inputs and save confirmations.
-Scripts in `workflows/` coordinate library operations and recommendations,
-while `books/` handles metadata lookup and searching. Only `data/book_database.sh`
-reads or writes `data/books.csv`; the other components access the library through
-that script. For recommendations, the workflow runs the history, interests, and
-discovery scripts in `recommendations/` concurrently using `&`, tracks their process
-IDs with `$!`, and waits for completion with `wait`. It then combines their outputs
-and pipes them into `refine_recommendations.sh`, which removes duplicates and books
-already in the library before the UI displays the shortlist. Scripts exchange book
-records as JSON Lines, keeping progress messages separate from the data. Small
-embedded Python sections handle CSV parsing, process cleanup, and text normalization.
+I split the application into small Bash scripts so each part has a clear job.
+`app.sh` opens the Gum menus in `ui/`. These screens collect input and show results;
+`ui/library_screen.sh` also lets me review book details before confirming a save.
+The scripts in `workflows/` connect those actions to the right components:
+`books/` handles searches and metadata lookup, and `recommendations/` generates
+and refines suggestions. Whenever a component needs library data, it goes through
+`data/book_database.sh`, the only script that reads or writes `data/books.csv`.
+For recommendations, the workflow starts all three strategies with `&`, tracks
+their process IDs with `$!`, and uses `wait` to collect their exit statuses.
+It combines the results and pipes them into `refine_recommendations.sh` to remove
+duplicates and books I already have, then returns the shortlist to the interface.
+Book records pass between scripts as JSON Lines, with progress messages kept
+separate so they do not get mixed into the results. Embedded Python handles CSV
+parsing, process cleanup, and text normalization.
 
 The five logical layers, from user interaction to storage:
 
@@ -139,75 +123,41 @@ uses code without another model request.
 
 ## Personalization
 
-The Fantasy Shelf defaults to a broad interest in fantasy and Tolkien's
-*The Lord of the Rings*. Session interests let the reader explore a current topic,
-while the three strategies balance past reading, stated interests, and discovery.
-The Gum interface uses a violet-and-gold fantasy library theme, bordered book
-cards, and section headings. Cards adapt to terminal width; recommendations
-include spoiler-free reasons.
-The default library includes fantasy examples about hope, courage, and renewal.
-Their randomly generated statuses and ratings are sample data and influence
-recommendations until edited. The separate demo library also uses sample records.
+I enjoy fantasy books, so I wanted the interface to feel a little like an old
+scroll. I used purple and gold with small stars and decorative borders around
+the titles and book details. The colors work with my white terminal background,
+and the book cards adjust to the terminal width.
 
-## Failures and limitations
+Fantasy also shapes the recommendations. The default interests include fantasy
+and Tolkien's *The Lord of the Rings*, and I can enter a topic such as dragons
+or epic journeys for a particular session. History uses my saved books and
+ratings, while Discovery can take me beyond my usual genres. Each recommendation
+includes a short, spoiler-free explanation of why I might enjoy it.
 
-Library features work without Codex or internet access. Metadata comes from
-[Open Library](https://openlibrary.org/dev/docs/api/search), with a 15-second
-request timeout and manual entry when no usable result is available. Genre
-suggestions are editable. AI suggestions can be inaccurate: review and correct
-the selected recommendation before saving. Recommendations are not automatically
-verified against Open Library.
+The sample books and input examples follow the same theme, including fantasy
+stories about hope, courage, and renewal. The default library starts with sample
+statuses and ratings, which affect recommendations until I update them. Demo
+mode uses its own temporary sample library.
 
-Each AI call has a 120-second timeout. If one strategy fails, successful results
-still appear. Failed calls show available error diagnostics. If all fail, the app
-explains the failure and returns to its menus. There are no automatic AI retries
-and no offline suggestion catalog. Last results remain in memory until exit;
-browsing them again does not call Codex. Ctrl-C cancels active work (and may exit
-the app); cleanup removes temporary data. Normal changes are saved immediately.
+## Notes
 
-This is a local, single-user application: run only one writer against a library
-at a time. The default CSV is part of the project, so review changes before
-pushing personal reading data to GitHub.
+- AI recommendations require internet access, a ChatGPT login with Codex access,
+  and available Codex allowance. Local library features work without Codex or internet.
+- AI book details may be inaccurate, so review them before saving. **Add Book**
+  offers an Open Library lookup or manual entry.
+- Normal mode saves changes to the library. Demo mode discards its temporary
+  library when you exit, but its recommendations still use real Codex allowance.
+- If one recommendation strategy fails, results from the others can still appear.
+  If all fail, you can return to managing your library.
 
-## Component interfaces
+## Testing
 
-Run components from any working directory. Set `BOOK_DB` to select a separate
-CSV; otherwise it defaults to this project's `data/books.csv`.
+Run the automated tests from the project directory:
 
 ```bash
-bash data/book_database.sh list
-bash data/book_database.sh search fantasy
-printf '%s\n' '{"title":"The Hobbit","author":"J. R. R. Tolkien","genre":"Fantasy"}' \
-  | bash data/book_database.sh add
-printf '%s\n' '{"status":"finished","rating":"5"}' \
-  | bash data/book_database.sh update 'The Hobbit' 'J. R. R. Tolkien'
-bash data/book_database.sh exists 'The Hobbit' 'J. R. R. Tolkien'
-echo fantasy | bash books/search_books.sh
-bash books/fetch_book_metadata.sh 'The Hobbit' 'Tolkien'
-bash workflows/get_recommendations.sh 'Dragons and epic journeys'
-```
-
-Book records use string fields `title,author,genre,status,rating,link`; omitted
-optional fields are blank and a new book defaults to `want-to-read`. `add` and
-`update` read one JSON object from stdin and return the saved record. `update`
-accepts only status/rating. `list` and `search` return JSON Lines. `exists` returns
-exit 0 if found and 1 if absent; invalid data or storage errors return 2.
-Recommendation scripts read library JSON Lines from stdin, accept an optional
-interest as argument 1 (ignored by History) and an optional schema path as argument 2, and return `title,author,genre,reason,strategy` JSON Lines.
-Direct strategy calls create their own temporary schema if none is supplied.
-Timeouts and process cleanup are managed by the workflow; use it for normal runs.
-`BOOK_AI_TIMEOUT` overrides the workflow’s default 120 seconds for testing.
-
-## Validation
-
-```bash
-# Optional: pip install pexpect (enables real Gum terminal tests)
 python3 -m unittest discover -s tests -v
-# Optional development tool: brew install shellcheck
-shellcheck -x app.sh books/*.sh data/*.sh ui/*.sh workflows/*.sh recommendations/*.sh
 ```
 
-Tests use temporary libraries and fake Codex/curl executables. They cover CSV
-round trips, input validation, duplicate detection, metadata failures, balanced
-refinement, overlapping AI processes, partial/total failures, malformed output,
-authentication, timeouts, cancellation, and paths with spaces. The automated suite makes no live AI calls.
+Tests use temporary libraries and simulated Codex and network responses, so they
+consume no AI allowance. Install the optional `pexpect` package to include the
+interactive Gum tests; otherwise, those tests are skipped.
