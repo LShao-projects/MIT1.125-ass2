@@ -138,7 +138,9 @@ uses code without another model request.
 The Fantasy Shelf defaults to a broad interest in fantasy and Tolkien's
 *The Lord of the Rings*. Session interests let the reader explore a current topic,
 while the three strategies balance past reading, stated interests, and discovery.
-The interface uses a restrained purple fantasy theme and spoiler-free reasons.
+The Gum interface uses a violet-and-gold fantasy library theme, bordered book
+cards, and section headings. Cards adapt to terminal width; recommendations
+include spoiler-free reasons.
 The default library includes fantasy examples about hope, courage, and renewal.
 Their randomly generated statuses and ratings are sample data and influence
 recommendations until edited. The separate demo library also uses sample records.

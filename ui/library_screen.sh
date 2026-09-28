@@ -1,8 +1,51 @@
 #!/bin/bash
 # UI functions: select, display, and edit records. No storage access here.
+# Keep decorative output separate from records returned by UI functions.
+fantasy_theme() {
+    # Light-terminal palette: antique gold, violet ink, and charcoal on the terminal background.
+    export GUM_CHOOSE_CURSOR='◆ ' GUM_CHOOSE_CURSOR_FOREGROUND=54
+    export GUM_CHOOSE_CURSOR_BACKGROUND=189
+    export GUM_CHOOSE_HEADER_FOREGROUND=60 GUM_CHOOSE_SELECTED_FOREGROUND=94
+    export GUM_CHOOSE_ITEM_FOREGROUND=238
+    export GUM_CHOOSE_PADDING='1 2' GUM_INPUT_PADDING='1 2'
+    export GUM_INPUT_PROMPT='✧ ' GUM_INPUT_PROMPT_FOREGROUND=94
+    export GUM_INPUT_HEADER_FOREGROUND=60 GUM_INPUT_CURSOR_FOREGROUND=94
+    export GUM_INPUT_PLACEHOLDER_FOREGROUND=241
+    export GUM_CONFIRM_PROMPT_FOREGROUND=60 GUM_CONFIRM_PADDING='1 2'
+    export GUM_CONFIRM_SELECTED_BACKGROUND=189 GUM_CONFIRM_SELECTED_FOREGROUND=54
+    export GUM_CONFIRM_UNSELECTED_BACKGROUND=254 GUM_CONFIRM_UNSELECTED_FOREGROUND=238
+}
+card_width() {
+    local columns
+    columns=$(tput cols 2>/dev/null) || columns=80
+    [[ "$columns" =~ ^[0-9]+$ ]] || columns=80
+    columns=$((columns - 6))
+    [ "$columns" -le 68 ] || columns=68
+    [ "$columns" -ge 16 ] || columns=16
+    printf '%s\n' "$columns"
+}
+shelf_banner() {
+    gum style --no-strip-ansi --border double --border-foreground 97 --foreground 94 \
+        --background "" --align center --padding '1 1' --width "$(card_width)" \
+        '✧ ───── ◇ ───── ✧' \
+        "$(gum style --bold --foreground 94 'THE FANTASY SHELF')" \
+        "$(gum style --foreground 60 'A library of other worlds')" \
+        '✧ ───── ◇ ───── ✧'
+    gum style --foreground 60 --italic --margin '0 0 1 0' \
+        --align center --width "$(card_width)" 'Tales to discover · Worlds to return to'
+}
+section_banner() {
+    gum style --foreground 94 --bold --margin '1 0 0 0' "  ✦  $1"
+    gum style --foreground 97 '  ─────── ◇ ───────'
+}
 select_book() {
     local records=$1 heading=${2:-Choose a book (Esc to return)} selection index
-    if [ -z "$records" ]; then echo 'No books found.' >&2; return 1; fi
+    if [ -z "$records" ]; then
+        gum style --foreground 60 --border rounded --border-foreground 60 \
+            --padding '1 1' --width "$(card_width)" \
+            'No books found.' 'Your next story is waiting. Add a book to begin.' >&2
+        return 1
+    fi
     selection=$(printf '%s\n' "$records" | jq -sr '
         to_entries[] | "\(.key + 1). \(.value.title) — \(.value.author)"' |
         gum choose --header "$heading") || return 1
@@ -10,10 +53,22 @@ select_book() {
     printf '%s\n' "$records" | jq -sc --argjson index "$index" '.[$index - 1]'
 }
 show_book() {
-    printf '%s\n' "$1" | jq -r '
-        "\n\(.title)\nby \(.author)\nGenre: \(.genre // "")\nStatus: \(.status // "not saved")\nRating: \(if (.rating // "") == "" then "unrated" else .rating + "/5" end)\nLink: \(.link // "")",
-        (if .reason then "Why: " + .reason + "\nStrategy: " + .strategy else empty end)'
+    local details title author
+    title=$(printf '%s\n' "$1" | jq -r '.title') || return 1
+    author=$(printf '%s\n' "$1" | jq -r '"by " + .author') || return 1
+    details=$(printf '%s\n' "$1" | jq -r '
+        "Genre: \(.genre // "")\nStatus: \(.status // "not saved")\nRating: \(if (.rating // "") == "" then "unrated" else .rating + "/5" end)",
+        (if (.link // "") != "" then "Link: " + .link else empty end),
+        (if .reason then "\nWhy: " + .reason + "\nStrategy: " + .strategy else empty end)') || return 1
+    gum style --no-strip-ansi --border rounded --border-foreground 97 --foreground 238 \
+        --background "" --padding '1 1' --margin '1 0' \
+        --width "$(card_width)" \
+        "$(gum style --foreground 94 --bold -- "$title")" \
+        "$(gum style --foreground 60 --italic -- "$author")" \
+        "$(gum style --foreground 97 '─────── ◇ ───────')" \
+        "$details"
 }
+
 pause_screen() {
     gum choose --header 'Press Enter to return' Back >/dev/null || true
 }
@@ -40,6 +95,7 @@ choose_update() {
 
 request_new_book() {
     local title author method
+    section_banner 'Inscribe a new book' >&2
     title=$(gum input --header 'Book title') || return 1
     [ -n "$title" ] || return 1
     author=$(gum input --header 'Author (optional for lookup)') || return 1
@@ -70,5 +126,6 @@ review_book() {
     printf '%s\n' "$edited"
 }
 request_search() {
+    section_banner 'Search the shelves' >&2
     gum input --header 'Search title, author, or genre'
 }

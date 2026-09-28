@@ -3,6 +3,8 @@
 RECOMMENDATIONS=
 recommendations_screen() {
     local action interest results book choice
+    section_banner 'The reading oracle'
+    gum style --foreground 60 --italic '  History · Interests · Discovery'
     while :; do
         if [ -n "$RECOMMENDATIONS" ]; then
             action=$(gum choose --header 'Your recommendations' 'Browse last results' 'Generate new recommendations' Back) || return 0
@@ -13,12 +15,12 @@ recommendations_screen() {
             Back) return 0 ;;
             'Generate new recommendations')
                 interest=$(gum input --header 'Any interests today? (optional)' --placeholder 'e.g. dragons, cozy magic, epic journeys') || continue
-                echo 'Generating recommendations… (Ctrl-C cancels)'
+                gum style --foreground 94 --margin '1 0' '  ✧  Generating recommendations… (Ctrl-C cancels)'
                 if results=$(bash "$BOOK_ROOT/workflows/get_recommendations.sh" "$interest"); then
                     RECOMMENDATIONS=$results
-                    if [ -z "$results" ]; then echo 'No new recommendations found.'; pause_screen; continue; fi
+                    if [ -z "$results" ]; then gum style --foreground 60 'No new recommendations found.'; pause_screen; continue; fi
                 else
-                    echo 'Recommendations unavailable. You can still manage your library.'
+                    gum style --foreground 94 --width "$(card_width)" 'Recommendations unavailable. You can still manage your library.'
                     pause_screen
                     continue
                 fi ;;
