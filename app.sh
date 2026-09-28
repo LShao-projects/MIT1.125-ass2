@@ -1,7 +1,9 @@
 #!/bin/bash
 # Entry point: dependencies, optional isolated demo library, then the UI.
 set -uo pipefail
-source "$(dirname "$0")/lib/common.sh"
+BOOK_ROOT=$(cd "$(dirname "$0")" && pwd)
+: "${BOOK_DB:=$BOOK_ROOT/data/books.csv}"
+export BOOK_ROOT BOOK_DB
 case "${1-}" in
     --help|-h) echo 'Usage: bash app.sh [--demo]'; exit 0 ;;
     ''|--demo) ;;

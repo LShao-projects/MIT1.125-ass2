@@ -1,8 +1,9 @@
 #!/bin/bash
 # stdin: candidate JSONL; stdout: up to five balanced recommendations.
 set -euo pipefail
-# shellcheck source=lib/common.sh
-source "$(dirname "$0")/../lib/common.sh"
+BOOK_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+: "${BOOK_DB:=$BOOK_ROOT/data/books.csv}"
+export BOOK_ROOT BOOK_DB
 # Read the library only through its public interface.
 owned=$(bash "$BOOK_ROOT/data/book_database.sh" list | jq -s '.')
 exec 3<&0

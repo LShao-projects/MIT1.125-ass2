@@ -3,9 +3,14 @@
 set -euo pipefail
 query=${1:?Usage: fetch_book_metadata.sh TITLE [AUTHOR]}
 author=${2-}
+# Open Library can return HTTP 500 for author=. Omit an unused author filter.
+query_params=(--data-urlencode "title=$query")
+if [[ "$author" =~ [^[:space:]] ]]; then
+    query_params+=(--data-urlencode "author=$author")
+fi
 response=$(curl --fail --silent --show-error --get --max-time 15 \
     --user-agent 'FantasyBookManager/1.0 (student terminal project)' \
-    --data-urlencode "title=$query" --data-urlencode "author=$author" \
+    "${query_params[@]}" \
     --data-urlencode 'fields=title,author_name,key,subject' --data-urlencode 'limit=5' \
     'https://openlibrary.org/search.json') || {
     echo 'Book lookup unavailable. You can enter details manually.' >&2; exit 1;

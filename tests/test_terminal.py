@@ -99,10 +99,10 @@ class TerminalTests(unittest.TestCase):
         self.choose('Where next?',4)
         self.choose('AI recommendations use your Codex allowance')
         self.entry('Any interests today?','Dragons')
-        self.choose('Choose a book')
+        self.choose('Choose a recommendation')
         self.expect('Why: A new adventure')
         self.choose('Next step')
-        # Empty fake metadata falls back to editable recommendation fields.
+        # Review the selected recommendation directly, without a metadata lookup.
         self.entry('Title (required)')
         self.entry('Author (required)')
         self.entry('Genre (optional)')
@@ -114,7 +114,7 @@ class TerminalTests(unittest.TestCase):
         self.expect('Saved: history0')
         self.pause()
         self.choose('Your recommendations')
-        self.choose('Choose a book')
+        self.choose('Choose a recommendation')
         self.choose('Next step',1)
         self.choose('Your recommendations',2)
         self.choose('Where next?')
@@ -125,3 +125,42 @@ class TerminalTests(unittest.TestCase):
         self.assertEqual(self.rows(),[], 'Demo must not touch the real library')
         events=[json.loads(line) for line in Path(self.env['FAKE_LOG']).read_text().splitlines()]
         self.assertEqual(sum(e['event']=='start' for e in events),3,'Cached browsing must not rerun AI')
+
+    def test_save_selected_recommendation_without_second_search(self):
+        lookup_log=self.directory/'metadata-requests.json'
+        self.env['FAKE_CURL_LOG']=str(lookup_log)
+        self.env['FAKE_METADATA']=json.dumps({'docs':[
+            {'title':'Unrelated book '+str(i),'author_name':['Someone else']}
+            for i in range(5)]})
+        self.start()
+        self.choose('Where next?',4)
+        self.choose('AI recommendations use your Codex allowance')
+        self.entry('Any interests today?','Dragons')
+        # Select C, the third recommendation, then cancel its review.
+        self.choose('Choose a recommendation',2)
+        self.expect('discovery0')
+        self.expect('Why: A new adventure')
+        self.choose('Next step')
+        self.expect('Title (required)')
+        self.child.send('\x1b')
+        self.choose('Your recommendations')
+        self.assertEqual(self.rows(),[], 'Cancelling review must not save anything')
+        self.choose('Choose a recommendation',2)
+        self.expect('Why: A new adventure')
+        self.choose('Next step')
+        self.entry('Title (required)')
+        self.entry('Author (required)')
+        self.entry('Genre (optional)','My fantasy shelf')
+        self.entry('Book information URL (optional)')
+        self.choose('Reading status')
+        self.choose('Rating')
+        self.expect('Save this book?')
+        self.child.send('y\r')
+        self.expect('Saved: discovery0')
+        self.pause()
+        self.choose('Your recommendations',2)
+        self.finish()
+        self.assertEqual(self.rows(),[{
+            'title':'discovery0','author':'Writer','genre':'My fantasy shelf',
+            'status':'want-to-read','rating':'','link':''}])
+        self.assertFalse(lookup_log.exists(), 'Saving a recommendation must not search again')

@@ -3,7 +3,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import signal
 import subprocess
 import tempfile
 import time
@@ -17,8 +16,12 @@ from pathlib import Path
 if sys.argv[1:3] == ['login', 'status']:
     print(os.environ.get('FAKE_AUTH', 'Logged in using ChatGPT'))
     sys.exit(0)
+schema = json.loads(Path(sys.argv[sys.argv.index('--output-schema')+1]).read_text())
+assert schema['properties']['books']['items']['required'] == ['title','author','genre','reason']
 prompt = sys.stdin.read()
 strategy = next(s for s in ['history','interests','discovery'] if 'Strategy: ' + s + '.' in prompt)
+if os.environ.get('FAKE_PROMPTS'):
+    (Path(os.environ['FAKE_PROMPTS']) / (strategy + '.txt')).write_text(prompt)
 log = Path(os.environ['FAKE_LOG'])
 with log.open('a') as f:
     f.write(json.dumps({'strategy':strategy,'event':'start','time':time.time(),'pid':os.getpid()})+'\n')
@@ -30,6 +33,7 @@ if mode == 'hang':
     time.sleep(30)
 time.sleep(.3)
 if mode == 'fail' or (mode == 'partial' and strategy == 'history'):
+    print('ERROR: Simulated service unavailable', file=sys.stderr)
     sys.exit(1)
 output = sys.argv[sys.argv.index('--output-last-message')+1]
 books = [{'title':strategy + str(i), 'author':'Writer', 'genre':'Fantasy', 'reason':'A new adventure'} for i in range(3)]
@@ -38,7 +42,14 @@ with log.open('a') as f:
     f.write(json.dumps({'strategy':strategy,'event':'end','time':time.time()})+'\n')
 '''
 FAKE_CURL = r'''#!/usr/bin/env python3
-import os, sys
+import json, os, sys
+from pathlib import Path
+if os.environ.get('FAKE_CURL_LOG'):
+    Path(os.environ['FAKE_CURL_LOG']).write_text(json.dumps(sys.argv[1:]))
+# Reproduce Open Library's server error for an empty author filter.
+if any(arg.startswith('author=') and not arg.split('=', 1)[1].strip() for arg in sys.argv[1:]):
+    print('curl: (22) The requested URL returned error: 500', file=sys.stderr)
+    sys.exit(22)
 sys.stdout.write(os.environ.get('FAKE_METADATA','{"docs":[]}'))
 sys.exit(int(os.environ.get('FAKE_CURL_STATUS','0')))
 '''
@@ -103,6 +114,21 @@ class ProjectTests(unittest.TestCase):
         self.assertNotEqual(self.run_script('books/fetch_book_metadata.sh','bad',check=False).returncode,0)
         self.env['FAKE_CURL_STATUS']='22'
         self.assertNotEqual(self.run_script('books/fetch_book_metadata.sh','bad',check=False).returncode,0)
+    def test_metadata_optional_author(self):
+        log=self.directory/'curl-arguments.json'
+        self.env['FAKE_CURL_LOG']=str(log)
+        self.env['FAKE_METADATA']=json.dumps({'docs':[{'title':'The Hobbit','author_name':['Tolkien']}]})
+        for args in [('The Hobbit',), ('The Hobbit',''), ('The Hobbit',' \t ')]:
+            with self.subTest(args=args):
+                result=self.run_script('books/fetch_book_metadata.sh',*args)
+                self.assertEqual(self.records(result.stdout)[0]['title'],'The Hobbit')
+                request=json.loads(log.read_text())
+                self.assertIn('title=The Hobbit',request)
+                self.assertFalse(any(arg.startswith('author=') for arg in request))
+        self.run_script('books/fetch_book_metadata.sh','The Hobbit','J. R. R. Tolkien')
+        request=json.loads(log.read_text())
+        self.assertIn('author=J. R. R. Tolkien',request)
+        self.assertEqual(request[request.index('author=J. R. R. Tolkien')-1],'--data-urlencode')
     def test_refinement(self):
         self.db('add',value=book('Owned','Writer'))
         candidates=[]
@@ -131,12 +157,70 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(len(self.records(result.stdout)),5)
         self.assertIn('failed',result.stderr)
         self.assertTrue(all(r['strategy']!='history' for r in self.records(result.stdout)))
+    def test_standalone_recommendation_scripts(self):
+        for filename, strategy in [('recommend_from_history','history'),
+                                   ('recommend_from_interests','interests'),
+                                   ('recommend_for_discovery','discovery')]:
+            result=self.run_script('recommendations/'+filename+'.sh','Dragons')
+            records=self.records(result.stdout)
+            self.assertEqual(len(records),3)
+            self.assertTrue(all(row['strategy']==strategy for row in records))
+
+    def test_strategy_specific_reader_data(self):
+        prompts = self.directory / 'prompts'
+        prompts.mkdir()
+        self.env['FAKE_PROMPTS'] = str(prompts)
+        saved = dict(book(), status='finished', rating='5')
+        self.db('add', value=saved)
+        self.db('add', value=dict(book('Other', 'Other Writer'), genre='Mystery',
+                                  status='reading', rating='2'))
+
+        def contexts(interest):
+            self.run_script('workflows/get_recommendations.sh', interest)
+            return {strategy: json.loads((prompts / (strategy + '.txt')).read_text()
+                                         .split('Reader data JSON:\n', 1)[1])
+                    for strategy in ('history', 'interests', 'discovery')}
+
+        data = contexts('dragons')
+        history, interests, discovery = (data[s] for s in ('history', 'interests', 'discovery'))
+        self.assertEqual(history['reading_history'][0]['rating'], '5')
+        self.assertNotIn('session_interest', history)
+        self.assertNotIn('fallback_preferences', history)
+        self.assertEqual(set(interests), {'preferences', 'session_interest', 'existing_books'})
+        self.assertEqual(interests['session_interest'], 'dragons')
+        self.assertNotIn('reading_history', discovery)
+        patterns = discovery['reading_patterns']
+        self.assertEqual(patterns['saved_count'], 2)
+        self.assertEqual(patterns['finished_count'], 1)
+        self.assertEqual(patterns['highly_rated_finished_genres'], [{'value': 'Fantasy', 'count': 1}])
+        self.assertEqual(patterns['genres'], [{'value': 'Fantasy', 'count': 1},
+                                             {'value': 'Mystery', 'count': 1}])
+        for context in data.values():
+            self.assertEqual(context['existing_books'], [
+                {'title': saved['title'], 'author': saved['author']},
+                {'title': 'Other', 'author': 'Other Writer'}])
+        changed = contexts('night')
+        self.assertEqual(changed['history'], history)
+        self.assertEqual(changed['interests']['session_interest'], 'night')
+        self.assertEqual(changed['discovery']['session_interest'], 'night')
+
+        self.env['BOOK_DB'] = str(self.directory / 'empty.csv')
+        empty = contexts('')
+        self.assertEqual(empty['history']['reading_history'], [])
+        self.assertIn('The Lord of the Rings',
+                      empty['history']['fallback_preferences'])
+        self.assertEqual(empty['interests']['session_interest'], '')
+        self.assertEqual(empty['discovery']['reading_patterns']['saved_count'], 0)
+        self.assertEqual(empty['discovery']['reading_patterns']['genres'], [])
+
     def test_failure_and_authentication(self):
         for mode in ['fail','malformed']:
             self.env['FAKE_MODE']=mode
             result=self.run_script('workflows/get_recommendations.sh',check=False)
             self.assertNotEqual(result.returncode,0)
             self.assertEqual(result.stdout,'')
+            if mode == 'fail':
+                self.assertIn('ERROR: Simulated service unavailable', result.stderr)
         self.env['FAKE_AUTH']='Logged in using an API key'
         result=self.run_script('recommendations/recommend_from_history.sh',check=False)
         self.assertNotEqual(result.returncode,0)

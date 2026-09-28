@@ -1,11 +1,11 @@
 #!/bin/bash
 # UI functions: select, display, and edit records. No storage access here.
 select_book() {
-    local records=$1 selection index
+    local records=$1 heading=${2:-Choose a book (Esc to return)} selection index
     if [ -z "$records" ]; then echo 'No books found.' >&2; return 1; fi
     selection=$(printf '%s\n' "$records" | jq -sr '
         to_entries[] | "\(.key + 1). \(.value.title) — \(.value.author)"' |
-        gum choose --header 'Choose a book (Esc to return)') || return 1
+        gum choose --header "$heading") || return 1
     index=${selection%%.*}
     printf '%s\n' "$records" | jq -sc --argjson index "$index" '.[$index - 1]'
 }
@@ -18,24 +18,21 @@ pause_screen() {
     gum choose --header 'Press Enter to return' Back >/dev/null || true
 }
 edit_book() {
-    local book=$1 title author genre link status rating
+    local book=$1 title author genre link progress
     title=$(gum input --header 'Title (required)' --value "$(jq -r '.title // ""' <<< "$book")") || return 1
     author=$(gum input --header 'Author (required)' --value "$(jq -r '.author // ""' <<< "$book")") || return 1
     genre=$(gum input --header 'Genre (optional)' --value "$(jq -r '.genre // ""' <<< "$book")") || return 1
     link=$(gum input --header 'Book information URL (optional)' --value "$(jq -r '.link // ""' <<< "$book")") || return 1
-    status=$(gum choose --header 'Reading status' --selected "$(jq -r '.status // "want-to-read"' <<< "$book")" \
-        want-to-read reading finished) || return 1
-    rating=$(gum choose --header 'Rating' unrated 1 2 3 4 5) || return 1
-    [ "$rating" != unrated ] || rating=
+    progress=$(choose_update "$book") || return 1
     jq -nc --arg title "$title" --arg author "$author" --arg genre "$genre" \
-        --arg link "$link" --arg status "$status" --arg rating "$rating" \
-        '{title:$title,author:$author,genre:$genre,link:$link,status:$status,rating:$rating}'
+        --arg link "$link" --argjson progress "$progress" \
+        '{title:$title,author:$author,genre:$genre,link:$link} + $progress'
 }
 choose_update() {
     local book=$1 status rating
-    status=$(gum choose --header 'Reading status' --selected "$(jq -r '.status' <<< "$book")" \
+    status=$(gum choose --header 'Reading status' --selected "$(jq -r '.status // "want-to-read"' <<< "$book")" \
         want-to-read reading finished) || return 1
-    rating=$(gum choose --header 'Rating' --selected "$(jq -r 'if .rating == "" then "unrated" else .rating end' <<< "$book")" \
+    rating=$(gum choose --header 'Rating' --selected "$(jq -r 'if (.rating // "") == "" then "unrated" else .rating end' <<< "$book")" \
         unrated 1 2 3 4 5) || return 1
     [ "$rating" != unrated ] || rating=
     jq -nc --arg status "$status" --arg rating "$rating" '{status:$status,rating:$rating}'

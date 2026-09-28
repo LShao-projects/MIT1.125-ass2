@@ -1,8 +1,9 @@
 #!/bin/bash
 # Only this component opens library CSV files. JSON Lines are the public interface.
 set -eu
-# shellcheck source=lib/common.sh
-source "$(dirname "$0")/../lib/common.sh"
+BOOK_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+: "${BOOK_DB:=$BOOK_ROOT/data/books.csv}"
+export BOOK_ROOT BOOK_DB
 # Preserve stdin for JSON input; Python's source is supplied separately.
 exec 3<&0
 python3 - "$BOOK_DB" "$@" <<'PY'

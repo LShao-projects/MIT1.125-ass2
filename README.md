@@ -1,8 +1,7 @@
 # The Fantasy Shelf
 
-A small terminal book manager for a reader who enjoys all kinds of fantasy,
-including *The Lord of the Rings*. Track books, look up metadata, and ask three
-AI readers for different perspectives on your next read.
+A small terminal book manager for a reader who enjoys all kinds of fantasy. Track books, look up metadata, and get AI
+recommendations based on reading history, interests, and discovery.
 
 ## Setup and run
 
@@ -36,67 +35,123 @@ bash app.sh
 bash app.sh --demo
 ```
 
-Use arrow keys and Enter to select, Esc to go back, and Quit to exit. The real
-library starts empty. Demo mode uses example books without changing your real
-library, but its **AI recommendations are live and consume Codex allowance**.
+Use arrow keys and Enter to select, Esc to go back, and Quit to exit. The default
+library includes sample records. Demo mode uses a separate temporary library;
+its AI recommendations are live and consume Codex allowance.
 
 The menu supports browsing, adding, searching, updating status/rating, and
 getting recommendations. Adding a book offers metadata lookup or manual entry.
 Review the details before saving. Search matches title, author, and genre.
 Statuses are `want-to-read`, `reading`, and `finished`; ratings are optional 1–5.
+For a recommendation, choose a book, select **Review and save**, edit or confirm
+its details, and confirm the save. Open Library lookup is available in **Add Book**.
 
 ## Architecture
 
-`app.sh` checks dependencies and starts the Gum UI. The UI calls workflows,
-which coordinate book and recommendation components. Only the data-layer
-script opens the library CSV, using a small embedded Python CSV routine for
-proper quoting and atomic writes. Components exchange JSON Lines on stdout;
-progress and errors go to stderr. The application logic and orchestration stay
-in Bash. Python also supplies a small process-group timeout helper and the
-recommendation normalization routine, avoiding platform-specific shell tools.
+The application is organized into small Bash scripts with separate responsibilities.
+`app.sh` starts the Gum interface in `ui/`, where users choose actions and view
+results. Scripts in `workflows/` coordinate library operations and recommendations,
+while `books/` handles metadata lookup and searching. Only `data/book_database.sh`
+reads or writes `data/books.csv`; the other components access the library through
+that script. For recommendations, the workflow runs the history, interests, and
+discovery scripts in `recommendations/` concurrently using `&`, tracks their process
+IDs with `$!`, and waits for completion with `wait`. It then combines their outputs
+and pipes them into `refine_recommendations.sh`, which removes duplicates and books
+already in the library before the UI displays the shortlist. Scripts exchange book
+records as JSON Lines, keeping progress messages separate from the data. Small
+embedded Python sections handle CSV parsing, process cleanup, and text normalization.
 
-```text
-Gum UI → workflows → book/recommendation scripts → data layer → CSV
-                      ├ history   ──┐
-                      ├ interests ──┼→ combine | refine → UI → save
-                      └ discovery ──┘
+The five logical layers, from user interaction to storage:
+
+```mermaid
+%%{init: {"theme": "base", "fontFamily": "Arial, sans-serif", "themeVariables": {"fontFamily": "Arial, sans-serif", "fontSize": "14px", "lineColor": "#94a3b8", "edgeLabelBackground": "#ffffff"}, "flowchart": {"curve": "linear", "rankSpacing": 24, "nodeSpacing": 18, "diagramPadding": 12}}}%%
+flowchart LR
+    UI("<b>Interface</b><br/>Gum menus")
+    W("<b>Workflows</b><br/>Coordinate actions")
+    C("<b>Components</b><br/>Books & recommendations")
+    D("<b>Data layer</b><br/>Library operations")
+    S("<b>Storage</b><br/>books.csv")
+    UI --> W --> C --> D --> S
+
+    classDef default fill:#f8fafc,stroke:#cbd5e1,color:#334155,stroke-width:1px,font-family:Arial
+    classDef accent fill:#f3eefa,stroke:#b9a1d3,color:#51366b,stroke-width:1px,font-family:Arial
+    classDef storage fill:#eef7f4,stroke:#a5c9bc,color:#285749,stroke-width:1px,font-family:Arial
+    class UI accent
+    class D,S storage
 ```
 
-The recommendation workflow launches three scripts with `&`, captures their
-process IDs using `$!`, and collects completion with `wait`. Each calls Codex
-independently with a different prompt and a JSON output schema. Calls run in a
-read-only sandbox with ephemeral sessions and temporary working directories.
-Prompts ask for no tools or file operations. The current library and optional
-session interest are sent to Codex as reader data; prompts exclude stored links.
-A Python supervisor limits each call to 120 seconds and cleans up its process
-group on timeout or cancellation. The workflow prints running/done/failed states
-and elapsed time, then pipes successful results into refinement.
+Inside the recommendation workflow, three strategies run in parallel. Their
+results are combined, filtered, and displayed for review before saving.
 
-Refinement excludes saved books, deduplicates normalized title/author pairs, and
-takes up to five books in history/interests/discovery round-robin order. This is
-transparent balancing, not a claimed objective ranking. Unicode normalization,
-case folding, and collapsed whitespace determine identity; different editions
-or substantially different title/author spellings may need manual review.
+```mermaid
+%%{init: {"theme": "base", "fontFamily": "Arial, sans-serif", "themeVariables": {"fontFamily": "Arial, sans-serif", "fontSize": "14px", "lineColor": "#94a3b8", "edgeLabelBackground": "#ffffff"}, "flowchart": {"curve": "linear", "rankSpacing": 24, "nodeSpacing": 18, "diagramPadding": 12}}}%%
+flowchart LR
+    Input("<b>Reader context</b><br/>Library + interests")
+    H("<b>History</b><br/>Reading history")
+    I("<b>Interests</b><br/>Fantasy tastes")
+    D("<b>Discovery</b><br/>New directions")
+    Join("<b>Combine</b><br/>Wait for results")
+    Filter("<b>Refine</b><br/>Remove duplicates<br/>and saved books")
+    UI("<b>Review</b><br/>Up to five books")
+
+    Input --> H & I & D
+    H & I & D --> Join
+    Join -->|pipe| Filter
+    Filter --> UI
+
+    classDef default fill:#f8fafc,stroke:#cbd5e1,color:#334155,stroke-width:1px,font-family:Arial
+    classDef parallel fill:#f3eefa,stroke:#b9a1d3,color:#51366b,stroke-width:1px,font-family:Arial
+    classDef result fill:#eef7f4,stroke:#a5c9bc,color:#285749,stroke-width:1px,font-family:Arial
+    class H,I,D parallel
+    class UI result
+```
+
+## Recommendation logic
+
+All three strategies call a large language model through `codex exec`, using the
+existing ChatGPT login and configured model. The workflow supplies a library
+snapshot through the data layer; each script selects or summarizes its own model
+input. Recommendations come from the model's knowledge, not keyword searches or
+Open Library queries. Each request asks for three real, published books with
+`title`, `author`, `genre`, and a short spoiler-free `reason`.
+
+| Script | Data sent to the model | Recommendation instructions |
+| --- | --- | --- |
+| `recommend_from_history.sh` | Individual titles, authors, genres, reading statuses, and ratings. The session interest is ignored. | Favor saved authors and genres, especially finished books rated 4–5; consider low ratings. Saving an unfinished book does not prove the reader liked it. When the library is empty, acknowledge the missing history and use the default fantasy/Tolkien preference. |
+| `recommend_from_interests.sh` | The fixed fantasy/Tolkien preference and the optional session interest, such as dragons or cozy magic. No individual genres, statuses, or ratings. | Prioritize the current interest when supplied; otherwise explore the predefined fantasy interests. Do not infer tastes from the exclusion list. |
+| `recommend_for_discovery.sh` | Counts by author and genre, saved and finished book totals, and genre counts for finished books rated 4–5, plus fixed and session interests. No individual ratings or statuses. | Explore beyond usual reading patterns, including adjacent or non-fantasy genres. Explain both the unfamiliar direction and its connection to the reader. Use the session interest as a bridge to exploration. With no saved books, use stated interests as the baseline. |
+
+All three also receive saved titles and authors as an exclusion list. Discovery's
+counts describe saved books, including unread ones. `jq` prepares the inputs, and
+the model interprets them. The shared prompt requires structured JSON and instructs
+the model not to use tools, run commands, or read or modify files.
+
+Each script validates the returned fields and adds its strategy label. Refinement
+normalizes titles and authors, removes duplicates and saved books, and takes up to
+five results in History, Interests, Discovery round-robin order. This selection
+uses code without another model request.
 
 ## Personalization
 
 The Fantasy Shelf defaults to a broad interest in fantasy and Tolkien's
-*The Lord of the Rings*. History suggestions favor saved books and high ratings;
-interest suggestions explore fantasy subgenres; discovery suggestions reach
-into less familiar or adjacent genres. You can add a preference such as cozy
-magic or epic journeys for each session. Suggestions include short spoiler-free
-reasons. The interface uses a restrained purple fantasy theme. Sample demo
-books are examples, not claims about your actual reading history.
+*The Lord of the Rings*. Session interests let the reader explore a current topic,
+while the three strategies balance past reading, stated interests, and discovery.
+The interface uses a restrained purple fantasy theme and spoiler-free reasons.
+The default library includes fantasy examples about hope, courage, and renewal.
+Their randomly generated statuses and ratings are sample data and influence
+recommendations until edited. The separate demo library also uses sample records.
 
 ## Failures and limitations
 
 Library features work without Codex or internet access. Metadata comes from
 [Open Library](https://openlibrary.org/dev/docs/api/search), with a 15-second
 request timeout and manual entry when no usable result is available. Genre
-suggestions are editable. AI suggestions can be inaccurate: review book details
-and Open Library matches before saving; the AI is not asked to invent URLs.
+suggestions are editable. AI suggestions can be inaccurate: review and correct
+the selected recommendation before saving. Recommendations are not automatically
+verified against Open Library.
 
-If one AI strategy fails, successful results still appear. If all fail, the app
+Each AI call has a 120-second timeout. If one strategy fails, successful results
+still appear. Failed calls show available error diagnostics. If all fail, the app
 explains the failure and returns to its menus. There are no automatic AI retries
 and no offline suggestion catalog. Last results remain in memory until exit;
 browsing them again does not call Codex. Ctrl-C cancels active work (and may exit
@@ -104,7 +159,7 @@ the app); cleanup removes temporary data. Normal changes are saved immediately.
 
 This is a local, single-user application: run only one writer against a library
 at a time. The default CSV is part of the project, so review changes before
-pushing personal reading data to GitHub. No login credentials belong in the repo.
+pushing personal reading data to GitHub.
 
 ## Component interfaces
 
@@ -130,8 +185,10 @@ optional fields are blank and a new book defaults to `want-to-read`. `add` and
 accepts only status/rating. `list` and `search` return JSON Lines. `exists` returns
 exit 0 if found and 1 if absent; invalid data or storage errors return 2.
 Recommendation scripts read library JSON Lines from stdin, accept an optional
-interest as argument 1, and return `title,author,genre,reason,strategy` JSON Lines.
-`BOOK_AI_TIMEOUT` overrides the default 120 seconds for testing.
+interest as argument 1 (ignored by History) and an optional schema path as argument 2, and return `title,author,genre,reason,strategy` JSON Lines.
+Direct strategy calls create their own temporary schema if none is supplied.
+Timeouts and process cleanup are managed by the workflow; use it for normal runs.
+`BOOK_AI_TIMEOUT` overrides the workflow’s default 120 seconds for testing.
 
 ## Validation
 
@@ -139,21 +196,10 @@ interest as argument 1, and return `title,author,genre,reason,strategy` JSON Lin
 # Optional: pip install pexpect (enables real Gum terminal tests)
 python3 -m unittest discover -s tests -v
 # Optional development tool: brew install shellcheck
-shellcheck -x app.sh books/*.sh data/*.sh lib/*.sh ui/*.sh workflows/*.sh recommendations/*.sh
+shellcheck -x app.sh books/*.sh data/*.sh ui/*.sh workflows/*.sh recommendations/*.sh
 ```
 
 Tests use temporary libraries and fake Codex/curl executables. They cover CSV
 round trips, input validation, duplicate detection, metadata failures, balanced
 refinement, overlapping AI processes, partial/total failures, malformed output,
-authentication, timeouts, cancellation, and paths with spaces. No paid calls are
-made by the automated suite.
-
-## Narrated demo — recording still required
-
-The required narrated video has **not been recorded yet**. Follow the
-[demo outline](docs/DEMO.md), then replace this paragraph with your actual video
-link before submission. Original requirements are preserved in
-[the assignment](docs/ASSIGNMENT.md).
-
-Submit the repository URL in the class sheet under **Assignment No 2** after
-adding your narrated demo.
+authentication, timeouts, cancellation, and paths with spaces. The automated suite makes no live AI calls.
