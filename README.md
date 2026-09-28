@@ -3,6 +3,10 @@
 A small terminal book manager for a reader who enjoys all kinds of fantasy. Track books, look up metadata, and get AI
 recommendations based on reading history, interests, and discovery.
 
+## Demo Video
+
+[Watch the narrated demo](demo-video.mp4)
+
 ## Setup and run
 
 Requirements: Bash 3.2+, Gum, jq, Python 3, and curl. Codex CLI is needed only
