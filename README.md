@@ -50,7 +50,8 @@ its details, and confirm the save. Open Library lookup is available in **Add Boo
 
 The application is organized into small Bash scripts with separate responsibilities.
 `app.sh` starts the Gum interface in `ui/`, where users choose actions and view
-results. Scripts in `workflows/` coordinate library operations and recommendations,
+results. `ui/library_screen.sh` also collects book inputs and save confirmations.
+Scripts in `workflows/` coordinate library operations and recommendations,
 while `books/` handles metadata lookup and searching. Only `data/book_database.sh`
 reads or writes `data/books.csv`; the other components access the library through
 that script. For recommendations, the workflow runs the history, interests, and
@@ -127,8 +128,9 @@ the model interprets them. The shared prompt requires structured JSON and instru
 the model not to use tools, run commands, or read or modify files.
 
 Each script validates the returned fields and adds its strategy label. Refinement
-normalizes titles and authors, removes duplicates and saved books, and takes up to
-five results in History, Interests, Discovery round-robin order. This selection
+cleans leading, trailing, and repeated whitespace in titles, authors, genres, and
+reasons while preserving their wording. It normalizes titles and authors for
+deduplication, removes saved books, and takes up to five results in History, Interests, Discovery round-robin order. This selection
 uses code without another model request.
 
 ## Personalization

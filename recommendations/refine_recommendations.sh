@@ -30,6 +30,8 @@ with os.fdopen(3) as stream:
                     raise ValueError()
                 if any(ord(c) < 32 or ord(c) == 127 for c in book[field]):
                     raise ValueError()
+                # Polish display text while preserving spelling, case, and punctuation.
+                book[field] = ' '.join(book[field].split())
             groups[book['strategy']].append(book)
         except (ValueError, KeyError, TypeError):
             print('Skipped malformed recommendation.', file=sys.stderr)

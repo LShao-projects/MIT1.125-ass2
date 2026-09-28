@@ -37,3 +37,38 @@ choose_update() {
     [ "$rating" != unrated ] || rating=
     jq -nc --arg status "$status" --arg rating "$rating" '{status:$status,rating:$rating}'
 }
+
+request_new_book() {
+    local title author method
+    title=$(gum input --header 'Book title') || return 1
+    [ -n "$title" ] || return 1
+    author=$(gum input --header 'Author (optional for lookup)') || return 1
+    method=$(gum choose --header 'How would you like to add it?' 'Look up details' 'Enter manually' Back) || return 1
+    [ "$method" != Back ] || return 1
+    jq -nc --arg title "$title" --arg author "$author" --arg method "$method" \
+        '{book:{title:$title,author:$author},method:$method}'
+}
+select_metadata() {
+    local matches=$1 original=$2 method
+    if [ -n "$matches" ]; then
+        method=$(gum choose --header 'Metadata found' 'Choose a match' 'Enter manually' Back) || return 1
+        case "$method" in
+            Back) return 1 ;;
+            'Choose a match') select_book "$matches"; return $? ;;
+        esac
+    else
+        gum confirm 'No usable metadata. Enter details manually?' || return 1
+    fi
+    printf '%s\n' "$original"
+}
+review_book() {
+    local edited
+    edited=$(edit_book "$1") || return 1
+    # stdout carries the confirmed record; the preview stays on the terminal.
+    show_book "$edited" >&2
+    gum confirm 'Save this book?' || return 1
+    printf '%s\n' "$edited"
+}
+request_search() {
+    gum input --header 'Search title, author, or genre'
+}

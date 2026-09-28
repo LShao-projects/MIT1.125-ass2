@@ -142,6 +142,18 @@ class ProjectTests(unittest.TestCase):
         self.assertNotIn('Owned',[r['title'] for r in records])
         self.assertEqual(len(set(r['title'] for r in records)),5)
         self.assertIn('Skipped malformed',result.stderr)
+    def test_refinement_polishes_display_fields(self):
+        candidates = [dict(title='  The   Last Unicorn  ', author=' Peter S.  Beagle ',
+                           genre='  Mythic   Fantasy ', reason=' Hope   amid  loss. ',
+                           strategy='history'),
+                      dict(title='the last unicorn', author='peter s. beagle',
+                           genre='Fantasy', reason='Duplicate', strategy='interests')]
+        result = self.run_script('recommendations/refine_recommendations.sh',
+                                 input='\n'.join(map(json.dumps, candidates)))
+        self.assertEqual(self.records(result.stdout), [dict(
+            title='The Last Unicorn', author='Peter S. Beagle', genre='Mythic Fantasy',
+            reason='Hope amid loss.', strategy='history')])
+
     def test_parallel_success_and_partial_failure(self):
         result=self.run_script('workflows/get_recommendations.sh')
         self.assertEqual(len(self.records(result.stdout)),5)
